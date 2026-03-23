@@ -9,8 +9,8 @@ library(patchwork)
 library(cowplot)
 library(ggalluvial)
 library(tidyterra)
-library(betalinkr)  # for betalinkr_multi()
-library(nngeo)      # for st_remove_holes()
+library(bipartite)
+library(nngeo)
 
 #### Supporting scripts ####
 source("Code/12_Analyses/12_00_LoadData.R")
