@@ -1,6 +1,7 @@
 #### Step one: Go to https://www.calflora.org/entry/observ.html, download occurrences for somewhere (Tools -> Download at the top), and extract the wkt value (API key) from the download link before it fully downloads (works in chrome, not firefox)
-
+# Get xun token from download url from a download query from https://www.calflora.org/search.html
 mtk_token = ""
+xun_token = ""
 
 #### Load required libraries ####
 library(sf)
@@ -390,4 +391,175 @@ map("state", "california", xlim = xlim, ylim = ylim,
 # Add concise title
 title(main = "Calflora Occurrences", cex.main = 0.9)
 box()
+
+
+#### Download species lists by plant community ####
+
+# All Munz (1968) plant community codes and names
+# Plus Lum/Walker and additional codes
+# From here https://www.calflora.org/dbfields.html#plant_community
+community_codes <- tribble(
+  ~code, ~name,
+  "m01", "Coastal Strand",
+  "m02", "Coastal Salt Marsh",
+  "m03", "Freshwater Marsh",
+  "m04", "Northern Coastal Scrub",
+  "m05", "Coastal Sage Scrub",
+  "m06", "Sagebrush Scrub",
+  "m07", "Shadscale Scrub",
+  "m08", "Creosote Bush Scrub",
+  "m09", "Alkali Sink",
+  "m10", "North Coastal Coniferous Forest",
+  "m11", "Closed-cone Pine Forest",
+  "m12", "Redwood Forest",
+  "m13", "Douglas-Fir Forest",
+  "m14", "Yellow Pine Forest",
+  "m15", "Red Fir Forest",
+  "m16", "Lodgepole Forest",
+  "m17", "Subalpine Forest",
+  "m18", "Bristle-cone Pine Forest",
+  "m19", "Mixed Evergreen Forest",
+  "m20", "Northern Oak Woodland",
+  "m21", "Southern Oak Woodland",
+  "m22", "Foothill Woodland",
+  "m23", "Chaparral",
+  "m24", "Coastal Prairie",
+  "m25", "Valley Grassland",
+  "m26", "Alpine Fell-fields",
+  "m27", "Northern Juniper Woodland",
+  "m28", "Pinyon-Juniper Woodland",
+  "m29", "Joshua Tree Woodland",
+  "m30", "Disturbed/Weed",
+  "m31", "Agricultural Weed",
+  "m40", "Escaped Cultivar",
+  "m41", "Naturalizing Introduction",
+  "m42", "Agricultural Plant",
+  "m45", "Wetland-Riparian",
+  "m50", "Many Plant Communities",
+  "m80", "Community Not Given"
+)
+
+# All columns available in the species table (col 29 excluded as it doesn't exist)
+species_cols <- "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,46,47"
+
+# Function to download species list for a single plant community
+download_community_species <- function(code, name, output_dir, cols = species_cols,
+                                       xun = NULL, max_retries = 3, delay = 2) {
+  
+  # Build URL — xun session token is optional but include if provided
+  xun_param <- if (!is.null(xun)) paste0("xun=", xun, "&") else ""
+  url <- paste0(
+    "https://www.calflora.org/app/downtext?",
+    xun_param,
+    "table=species&format=CSV&cols=", cols,
+    "&psp=plantcomm::", code, "!!",
+    "&active=1"
+  )
+  
+  output_file <- file.path(output_dir, paste0(code, "_", gsub("[^a-zA-Z0-9]", "_", name), ".csv"))
+  
+  for (attempt in 1:max_retries) {
+    tryCatch({
+      response <- GET(url, timeout(60))
+      
+      if (status_code(response) == 200) {
+        # Use rawToChar(multiple=TRUE) + iconv to handle special/accented characters
+        # (content(..., "text") fails silently on some large responses)
+        raw_content <- content(response, "raw")
+        content_text <- iconv(rawToChar(raw_content, multiple = TRUE),
+                              from = "latin1", to = "UTF-8", sub = "byte")
+        content_text <- paste(content_text, collapse = "")
+        
+        if (nchar(content_text) > 0) {
+          writeLines(content_text, output_file, useBytes = TRUE)
+          n_lines <- length(strsplit(content_text, "\n")[[1]]) - 1
+          cat(sprintf("✓ [%s] %s — %d species\n", code, name, n_lines))
+          return(TRUE)
+        } else {
+          cat(sprintf("✗ [%s] Empty response (attempt %d)\n", code, attempt))
+        }
+      } else {
+        cat(sprintf("✗ [%s] HTTP %d (attempt %d)\n", code, status_code(response), attempt))
+      }
+    }, error = function(e) {
+      cat(sprintf("✗ [%s] Error (attempt %d): %s\n", code, attempt, e$message))
+    })
+    
+    if (attempt < max_retries) Sys.sleep(delay)
+  }
+  
+  return(FALSE)
+}
+
+# Download all communities
+# Note: xun is a session token visible in the download URL on the advanced search page.
+download_all_communities <- function(output_dir = "Data_Raw/Species/calflora_communities",
+                                     xun = NULL,
+                                     delay = 2) {
+  
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  results <- community_codes %>%
+    mutate(
+      success = map2_lgl(code, name, function(code, name) {
+        result <- download_community_species(code, name, output_dir, xun = xun)
+        Sys.sleep(delay)
+        result
+      })
+    )
+  
+  cat("\n=== Community Download Summary ===\n")
+  cat(sprintf("Successful: %d / %d\n", sum(results$success), nrow(results)))
+  
+  failed <- results %>% filter(!success)
+  if (nrow(failed) > 0) {
+    cat("Failed communities:\n")
+    print(failed %>% select(code, name))
+  }
+  
+  return(results)
+}
+
+# Read and combine all downloaded community CSVs into one table,
+# adding a column for the community code and name
+combine_community_files <- function(output_dir = "Data_Raw/Species/calflora_communities") {
+  
+  files <- list.files(output_dir, pattern = "\\.csv$", full.names = TRUE)
+  cat(sprintf("Reading %d community files...\n", length(files)))
+  
+  combined <- map_dfr(files, function(f) {
+    # Extract code and name from filename (e.g. "m09_Alkali_Sink.csv")
+    fname   <- tools::file_path_sans_ext(basename(f))
+    code    <- str_extract(fname, "^m\\d+")
+    comm_name <- str_replace(fname, "^m\\d+_", "") %>% str_replace_all("_", " ")
+    
+    tryCatch(
+      read_csv(f, col_types = cols(.default = "c"), show_col_types = FALSE) %>%
+        mutate(community_code = code, community_name = comm_name, .before = 1),
+      error = function(e) {
+        cat(sprintf("  Could not read %s: %s\n", basename(f), e$message))
+        NULL
+      }
+    )
+  })
+  
+  cat(sprintf("Combined: %d total rows across all communities\n", nrow(combined)))
+  return(combined)
+}
+
+#### Run community downloads ####
+
+# Download all community CSVs
+community_results <- download_all_communities(
+  output_dir = "Data_Raw/Species_Traits_Attributes/calflora_communities",
+  xun = xun_token,   # <-- paste your session token here 
+  delay = 2
+)
+
+# Combine into a single data frame if desired
+community_species <- combine_community_files("Data_Raw/Species_Traits_Attributes/calflora_communities")
+
+# Save combined file
+write_csv(community_species, "Species_Traits_Attributes/calflora_all_communities.csv")
+cat("Saved combined file to Species_Traits_Attributes/calflora_all_communities.csv\n")
 
