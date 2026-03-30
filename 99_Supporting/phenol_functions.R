@@ -1,3 +1,6 @@
+## Estimate phenometrics using a standard Von Mises distribution.
+## Note: Not used in Baiotto and Cosma (2026)
+
 #### Circular pheno functions ####
 # Function to convert day of year to radians
 doy_to_radians <- function(doy, year_length = 365) {
