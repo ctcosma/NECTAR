@@ -12,7 +12,8 @@ source("Code/99_Supporting/name_harmonization.R")
 
 #### Read in data ####
 # Core checklist
-checklist <- fread("Data_Clean/Species_Checklists/checklist_cleaned.csv")
+checklist <- fread("Data_Clean/Species_Checklists/checklist_cleaned.csv") %>% 
+  filter(taxon != "hummingbirds")
 
 # Regional occurrence
 sp_by_region <- read.csv("Data_Clean/Species_Checklists/ecoregion_checklist.csv")
@@ -54,7 +55,7 @@ plant_sdm_names <- plant_sdm_names[!grepl("manifest", plant_sdm_names)] %>%
   gsub("_", " ", .)
 
 # Pollinators
-pollinator_folders <- c("bees", "butterflies", "moths", "hoverflies", "hummingbirds")
+pollinator_folders <- c("bees", "butterflies", "moths", "hoverflies")
 pollinator_sdm_names <- unlist(lapply(pollinator_folders, function(taxon) {
   files <- list.files(
     file.path("Data_Clean/SDMs/sdm_by_taxon", taxon, "continuous"),
@@ -166,7 +167,15 @@ pollinator_attrs <- bind_rows(
   unique()
 
 #### Assemble final supplementary table ####
-supplementary_checklist <- checklist %>%
+# First filtering checklist to only one entry per genus_species (checklist has subspecies entries too)
+checklist_filt <- checklist %>%
+  # flag rows where scientificName matches genus_species (i.e. not a subspecies)
+  mutate(is_species_level = scientificName == genus_species) %>%
+  arrange(genus_species, desc(is_species_level)) %>%  # species-level rows first
+  dplyr::select(genus_species, taxon, phylum, class, order, family, genus) %>%
+  distinct(genus_species, .keep_all = TRUE) # Get first entry (preferred species level)
+  
+supplementary_checklist <- checklist_filt %>%
   dplyr::select(genus_species, taxon, phylum, class, order, family, genus) %>%
   unique() %>%
   ## Data availability flags

@@ -77,6 +77,16 @@ interactions_full_tax <- interactions_full %>%
 interactions_full_tax <- interactions_full_tax %>%
   filter(taxon != "hummingbirds")
 
+# unique sp-sp level ints
+interactions_full_tax %>% 
+  dplyr::select(sourceTaxonName_harm, targetTaxonName_harm, taxon) %>% 
+  filter(sourceTaxonName_harm %in% checklist_cleaned$genus_species & 
+           targetTaxonName_harm %in% checklist_cleaned$genus_species) %>% 
+  unique() %>%
+  group_by(taxon) %>% 
+  summarise(n=n())
+
+
 interactions_full_tax_nectar <- interactions_full_tax %>%
   filter(interactionTypeName == "visitsFlowersOf")
 interactions_full_tax_host <- interactions_full_tax %>%
@@ -527,6 +537,124 @@ combined_map <- plot_grid(top_row, bottom_rows, ncol = 1, rel_heights = c(1, 0.5
 ggsave("Figures/Supplementary/occurrence_density_CA.png", combined_map, 
        width = 14, height = 16, dpi = 300, bg = "white")
 
+#### Breakdown of SDM method used ####
+#Visualize the number/proportion of species in each SDM type per taxa
+#Pre-processing 
+
+#list all CSV files recursively
+csv_files <- list.files(
+  path = "Data_Clean/SDMs/sdm_by_taxon",
+  pattern = "\\.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+sdm_manifests <- list.files(
+  path = "Data_Clean/SDMs/sdm_by_taxon",
+  pattern = "\\continuous_manifest.csv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+sdm_types <- do.call(rbind, lapply(sdm_manifests, read.csv))
+setDT(sdm_types)
+
+# # keep only the 2nd occurrence per species (if duplicates exist)
+# sdm_types <- sdm_types[
+#   , .SD[.N >= 2][2],
+#   by = species
+# ]
+
+# save for later in script if needed
+sdm_types_allCols <- sdm_types
+
+#take needed columns
+sdm_types = sdm_types[,c(2,3)]
+
+#write
+fwrite(
+  sdm_types,
+  file = "Temp/sdm_types.csv"
+)
+
+sdm_types <- read.csv("Temp/sdm_types.csv")
+
+# clean + recode
+sdm_types <- sdm_types %>%
+  filter(taxon != "hummingbirds") %>%
+  mutate(
+    model_type = recode(
+      model_type,
+      "SDM" = "Standard Ensemble Model",
+      "ESM" = "Ensemble of Small Models",
+      "ultraRare_alphahull" = "Simple Buffer"
+    ),
+    model_type = factor(
+      model_type,
+      levels = c(
+        "Simple Buffer",
+        "Ensemble of Small Models",
+        "Standard Ensemble Model"
+      )
+    )
+  )
+
+# calculate raw counts
+count_df <- sdm_types %>%
+  count(taxon, model_type)
+
+# plot raw stacked counts
+p <- ggplot(count_df, aes(x = taxon, y = n, fill = model_type)) +
+  geom_col(width = 0.8) +
+  geom_text(
+    aes(label = n),
+    position = position_stack(vjust = 0.5),
+    size = 3
+  ) +
+  labs(
+    x = "Taxon",
+    y = "Number of Species",
+    fill = "Model Type"
+  ) +
+  theme_cowplot() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+p
+
+# calculate proportions within each taxon
+prop_df <- sdm_types %>%
+  count(taxon, model_type) %>%
+  group_by(taxon) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup()
+
+# plot stacked proportions 
+p2 <- ggplot(prop_df, aes(x = taxon, y = prop, fill = model_type)) +
+  geom_col(width = 0.8) +
+  geom_text(
+    aes(label = scales::percent(prop, accuracy = 1)),
+    position = position_stack(vjust = 0.5),
+    size = 3
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Taxon",
+    y = "Proportion of Species",
+    fill = "Model Type"
+  ) +
+  theme_cowplot() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+p2
+
+#Save 
+ggsave("Figures/Supplementary/sdm_model_type_counts_by_taxon.pdf", p, width = 8, height = 6)
+ggsave("Figures/Supplementary/sdm_model_type_proportion_by_taxon.pdf", p2, width = 8, height = 6)
+
 #### Breakdown of Phenometric method used ####
 phenology_with_taxon <- phenology %>%
   left_join(unique(checklist_cleaned[, c("genus_species", "taxon")])) %>%
@@ -575,6 +703,66 @@ combined_plot <- plot_grid(panel_a, panel_b, labels = c("A", "B"), nrow = 2)
 
 ggsave("Figures/Supplementary/phenology_summary.png", combined_plot, 
        width = 10, height = 10, dpi = 300)
+
+#### Summarise # species by method used ####
+supplementary_checklist <- read.csv("Tables/Supplementary_Checklist.csv")
+
+# Total
+supplementary_checklist %>% 
+  filter(has_SDM == T & has_phenometrics == T) %>%
+  unique() %>%
+  group_by(taxon) %>%
+  summarise(n=n())
+
+
+# How many removed if we did not use lower tier pheno methods and/or hull approach for sdm
+sp_topMethods <- supplementary_checklist %>% 
+  filter(has_SDM == TRUE & has_phenometrics == T) %>%
+  group_by(taxon) %>%
+  filter(phenometrics_tier == "Tier1") %>%
+  filter(genus_species %in% sdm_types_allCols[sdm_types_allCols$model_type %in% c("ESM","SDM"),]$species) 
+
+sp_topMethods %>% 
+  group_by(taxon) %>%
+  summarise(n=n())
+
+# num ints 
+predicted_interactions %>%
+  filter(method_type != "Level3_GEOOSIS",
+         sourceTaxonType != "hummingbirds") %>%
+  select(targetTaxonName_harm, sourceTaxonName_harm, interactionTypeName) %>%
+  group_by(interactionTypeName) %>%
+  summarise(n= n())
+
+# num ints filtered for top methods
+predicted_interactions %>%
+  filter(method_type != "Level3_GEOOSIS",
+         sourceTaxonType != "hummingbirds",
+         targetTaxonName_harm %in% sp_topMethods$genus_species,
+         sourceTaxonName_harm %in% sp_topMethods$genus_species) %>%
+  select(targetTaxonName_harm, sourceTaxonName_harm, interactionTypeName) %>%
+  group_by(interactionTypeName) %>%
+  summarise(n= n())
+
+# how many pairs?
+predicted_interactions %>%
+  filter(method_type != "Level3_GEOOSIS",
+         sourceTaxonType != "hummingbirds") %>%
+  select(targetTaxonName_harm, sourceTaxonName_harm, interactionTypeName) %>%
+    unique() %>%
+  group_by(interactionTypeName) %>%
+  summarise(n= n())
+
+# how many pairs, top method only?
+predicted_interactions %>%
+  filter(method_type != "Level3_GEOOSIS",
+         sourceTaxonType != "hummingbirds",
+         targetTaxonName_harm %in% sp_topMethods$genus_species,
+         sourceTaxonName_harm %in% sp_topMethods$genus_species) %>%
+  select(targetTaxonName_harm, sourceTaxonName_harm, interactionTypeName) %>%
+  unique() %>%
+  group_by(interactionTypeName) %>%
+  summarise(n= n())
 
 #### Size of interaction data ####
 ints_pols_CAsp <- interactions %>%
