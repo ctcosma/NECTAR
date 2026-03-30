@@ -1,3 +1,6 @@
+## Estimate phenometrics using skewed Von Mises distribution
+## Relies on characterization of skewed Von Mises distribution by Ahsanullah1 and Anis (2019) in https://www.aligarhjournalstatistics.com/issues/ajs-v-39-2019/2-mza-ma.pdf
+
 #### Circular pheno functions ####
 # Function to convert day of year to radians
 doy_to_radians <- function(doy, year_length = 365) {
