@@ -1,3 +1,5 @@
+## For extending the skewed Von Mises approach to a mixed model framework (which could be especially useful for identifying active periods of multi-voltine species)
+## Relies on characterization of skewed Von Mises distribution by Ahsanullah1 and Anis (2019) in https://www.aligarhjournalstatistics.com/issues/ajs-v-39-2019/2-mza-ma.pdf
 ## Note: Not used in Baiotto and Cosma (2026), and not thoroughly tested
 
 # PDF from equation (1.3) - single component
