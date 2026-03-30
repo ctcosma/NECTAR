@@ -1,3 +1,5 @@
+## Note: Not used in Baiotto and Cosma (2026), and not thoroughly tested
+
 # PDF from equation (1.3) - single component
 pdf_skewed_vm <- function(theta, lambda, kappa, mu = 0) {
   if (lambda < -1 || lambda > 1) stop("lambda must be between -1 and 1")
